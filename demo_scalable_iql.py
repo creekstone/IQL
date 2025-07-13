@@ -4,7 +4,7 @@ Demonstration of the Scalable IQL System
 Showcases batch processing, real-time monitoring, and performance optimizations.
 
 Author: Buford Ray Conley
-Copyright (c) 2024 Buford Ray Conley
+Copyright (c) 2025 Buford Ray Conley
 
 This work is licensed under the Creative Commons Attribution-NonCommercial 4.0 
 International License. To view a copy of this license, visit:
