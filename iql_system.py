@@ -2,6 +2,9 @@ import numpy as np
 from typing import Tuple, List, Optional
 from dataclasses import dataclass
 import quaternion  # numpy-quaternion package
+import numba
+from numba import jit, prange
+import sparse  # For large-scale tensor operations
 
 @dataclass
 class TruthVector:
@@ -290,6 +293,164 @@ def validate_iql_implementation():
     print("✓ Crisis simulation validated\n")
     
     print("=== All Tests Passed ===")
+
+@jit(nopython=True)
+def fast_ri_computation(truth_vectors: np.ndarray) -> np.ndarray:
+    """Optimized RI computation for large batches."""
+    n_vectors = truth_vectors.shape[0]
+    ri_values = np.empty(n_vectors)
+    
+    for i in prange(n_vectors):
+        max_diff = 0.0
+        for j in range(4):
+            for k in range(j + 1, 4):
+                diff = abs(truth_vectors[i, j] - truth_vectors[i, k])
+                if diff > max_diff:
+                    max_diff = diff
+        ri_values[i] = max_diff
+    
+    return ri_values
+
+@jit(nopython=True)
+def fast_tensor_norm(truth_vector: np.ndarray) -> float:
+    """JIT-compiled tensor norm computation."""
+    max_log_ratio = 0.0
+    epsilon = 1e-10
+    
+    for i in range(4):
+        for j in range(4):
+            if i != j:
+                a = max(truth_vector[i], epsilon)
+                b = max(truth_vector[j], epsilon)
+                log_ratio = abs(np.log(a / b))
+                if log_ratio > max_log_ratio:
+                    max_log_ratio = log_ratio
+    
+    return max_log_ratio / np.log(100.0)
+
+class ScalableIQLSystem:
+    """IQL system optimized for large-scale analysis."""
+    
+    def __init__(self):
+        self.batch_size = 10000
+        self.use_sparse = True
+    
+    def batch_process_vectors(self, truth_vectors: np.ndarray) -> dict:
+        """Process large batches of truth vectors efficiently."""
+        n_vectors = len(truth_vectors)
+        
+        # Compute RI for all vectors
+        ri_values = fast_ri_computation(truth_vectors)
+        
+        # Identify high-risk vectors
+        high_risk_indices = np.where(ri_values > 0.5)[0]
+        
+        # Compute tensor norms for high-risk vectors only
+        tensor_norms = np.array([
+            fast_tensor_norm(truth_vectors[i]) 
+            for i in high_risk_indices
+        ])
+        
+        return {
+            'ri_distribution': {
+                'mean': np.mean(ri_values),
+                'std': np.std(ri_values),
+                'max': np.max(ri_values),
+                'high_risk_count': len(high_risk_indices)
+            },
+            'high_risk_indices': high_risk_indices,
+            'tensor_norms': tensor_norms,
+            'processing_time': None  # Add timing as needed
+        }
+    
+    def distributed_optimization(self, initial_states: List[TruthVector], 
+                               target_ri: float = 0.2) -> List[List[str]]:
+        """Distributed optimization across multiple initial states."""
+        # This would interface with Ray, Dask, or similar for true distribution
+        results = []
+        
+        for state in initial_states:
+            system = IQLSystem(state)
+            interventions = system.optimal_intervention(target_ri)
+            results.append(interventions)
+        
+        return results
+
+# Integration with external systems
+class IQLDashboard:
+    """Real-time monitoring dashboard for IQL systems."""
+    
+    def __init__(self):
+        self.alert_thresholds = {
+            'ri_critical': 0.7,
+            'ri_warning': 0.5,
+            'tensor_critical': 2.0
+        }
+        self.systems = {}
+    
+    def register_system(self, name: str, initial_state: TruthVector):
+        """Register a system for monitoring."""
+        self.systems[name] = {
+            'system': IQLSystem(initial_state),
+            'alerts': [],
+            'last_update': None
+        }
+    
+    def update_system(self, name: str, new_state: TruthVector):
+        """Update system state and check for alerts."""
+        if name not in self.systems:
+            raise ValueError(f"System {name} not registered")
+        
+        system_data = self.systems[name]
+        system_data['system'].current_state = new_state
+        
+        # Check alert conditions
+        ri = new_state.reflexive_imbalance()
+        tensor = BayesTensor(new_state)
+        tensor_norm = tensor.max_norm()
+        
+        alerts = []
+        if ri > self.alert_thresholds['ri_critical']:
+            alerts.append(f"CRITICAL: RI = {ri:.3f} exceeds critical threshold")
+        elif ri > self.alert_thresholds['ri_warning']:
+            alerts.append(f"WARNING: RI = {ri:.3f} in warning zone")
+        
+        if tensor_norm > self.alert_thresholds['tensor_critical']:
+            alerts.append(f"CRITICAL: Tensor norm = {tensor_norm:.3f} exceeds threshold")
+        
+        system_data['alerts'].extend(alerts)
+        return alerts
+    
+    def get_system_status(self, name: str) -> dict:
+        """Get comprehensive system status."""
+        if name not in self.systems:
+            return {'error': f'System {name} not found'}
+        
+        system = self.systems[name]['system']
+        current_state = system.current_state
+        
+        return {
+            'name': name,
+            'current_state': current_state.vector.tolist(),
+            'ri': current_state.reflexive_imbalance(),
+            'tensor_norm': BayesTensor(current_state).max_norm(),
+            'weakest_quadrant': np.argmin(current_state.vector),
+            'recent_alerts': self.systems[name]['alerts'][-5:],  # Last 5 alerts
+            'recommended_action': self._recommend_action(current_state)
+        }
+    
+    def _recommend_action(self, state: TruthVector) -> str:
+        """Recommend intervention based on current state."""
+        ri = state.reflexive_imbalance()
+        
+        if ri < 0.3:
+            return "System stable - no intervention needed"
+        elif ri < 0.5:
+            return "Monitor closely - consider preemptive intervention"
+        else:
+            weakest = np.argmin(state.vector)
+            operator_map = {0: 'alpha', 1: 'beta', 2: 'gamma', 3: 'delta'}
+            return f"URGENT: Apply {operator_map[weakest]} operator to strengthen weakest quadrant"
 
 if __name__ == "__main__":
     validate_iql_implementation() 
